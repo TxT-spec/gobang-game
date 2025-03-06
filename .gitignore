@@ -1,0 +1,3 @@
+ECHO 处于打开状态。
+node_modules/
+package-lock.json

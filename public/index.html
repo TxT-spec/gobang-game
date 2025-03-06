@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>五子棋</title>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      background-color: #f0f0f0;
+    }
+    #board {
+      width: 450px;
+      height: 450px;
+      background: #d2b48c;
+      position: relative;
+      border: 2px solid #000;
+    }
+    .cell {
+      width: 30px;
+      height: 30px;
+      position: absolute;
+      box-sizing: border-box;
+      border: 1px solid #000;
+    }
+    .piece {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      position: absolute;
+      left: 2px;
+      top: 2px;
+      box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+    }
+    .black { background: black; }
+    .white { background: white; }
+    #startButton {
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    #board.disabled {
+      pointer-events: none;
+      opacity: 0.5;
+    }
+    #status {
+      margin-top: 10px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div id="board" class="disabled"></div>
+  <button id="startButton">开始对决</button>
+  <div id="status">等待其他玩家...</div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.0/socket.io.js"></script>
+  <script>
+    // 部署后替换为你的Vercel域名，比如 https://gobang-game.vercel.app
+    const socket = io('/', {
+      transports: ['polling', 'websocket']
+    });
+    const board = document.getElementById('board');
+    const startButton = document.getElementById('startButton');
+    const status = document.getElementById('status');
+    const size = 15;
+    const cellSize = 30;
+    let currentColor = 'black';
+    let boardArray = Array(size).fill().map(() => Array(size).fill(null));
+    let gameStarted = false;
+    let roomId;
+
+    // 连接后请求加入房间
+    socket.on('connect', () => {
+      socket.emit('joinRoomRequest');
+    });
+
+    // 接收分配的房间ID
+    socket.on('assignRoom', (room) => {
+      roomId = room;
+      console.log(`加入房间：${roomId}`);
+      status.textContent = `房间 ${roomId}：等待其他玩家...`;
+    });
+
+    // 接收玩家数量更新
+    socket.on('playerCount', (count) => {
+      if (count < 2) {
+        status.textContent = `房间 ${roomId}：等待其他玩家...`;
+      } else {
+        status.textContent = `房间 ${roomId}：玩家已齐，点击“开始对决”`;
+      }
+    });
+
+    // 绘制棋盘格子
+    for (let row = 0; row < size; row++) {
+      for (let col = 0; col < size; col++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.style.left = `${col * cellSize}px`;
+        cell.style.top = `${row * cellSize}px`;
+        cell.dataset.x = col;
+        cell.dataset.y = row;
+        cell.addEventListener('click', () => {
+          if (!gameStarted) return;
+          const x = parseInt(cell.dataset.x);
+          const y = parseInt(cell.dataset.y);
+          console.log(`点击了格子：x=${x}, y=${y}`);
+          if (boardArray[x][y] === null) {
+            socket.emit('move', { room: roomId, x, y, color: currentColor });
+            handleMove(x, y, currentColor);
+            currentColor = currentColor === 'black' ? 'white' : 'black';
+          }
+        });
+        board.appendChild(cell);
+      }
+    }
+
+    // 绘制棋子
+    function drawPiece(x, y, color) {
+      const piece = document.createElement('div');
+      piece.className = `piece ${color}`;
+      console.log(`添加棋子：x=${x}, y=${y}, color=${color}`);
+      const index = y * size + x;
+      board.children[index].appendChild(piece);
+    }
+
+    // 处理落子逻辑
+    function handleMove(x, y, color) {
+      if (boardArray[x][y] !== null) return;
+      boardArray[x][y] = color;
+      drawPiece(x, y, color);
+      if (checkWin(x, y, color)) {
+        alert(`${color === 'black' ? '黑棋' : '白棋'} 赢了！`);
+        resetGame();
+      }
+    }
+
+    // 检查胜利条件
+    function checkWin(x, y, color) {
+      let count;
+
+      // 检查横向（同一行y，不同列x）
+      count = 1;
+      for (let i = 1; i < 5; i++) {
+        if (x - i >= 0 && boardArray[x - i][y] === color) count++;
+        else break;
+      }
+      for (let i = 1; i < 5; i++) {
+        if (x + i < 15 && boardArray[x + i][y] === color) count++;
+        else break;
+      }
+      if (count >= 5) return true;
+
+      // 检查纵向（同一列x，不同行y）
+      count = 1;
+      for (let i = 1; i < 5; i++) {
+        if (y - i >= 0 && boardArray[x][y - i] === color) count++;
+        else break;
+      }
+      for (let i = 1; i < 5; i++) {
+        if (y + i < 15 && boardArray[x][y + i] === color) count++;
+        else break;
+      }
+      if (count >= 5) return true;
+
+      // 检查左斜（从左上到右下）
+      count = 1;
+      for (let i = 1; i < 5; i++) {
+        if (x - i >= 0 && y - i >= 0 && boardArray[x - i][y - i] === color) count++;
+        else break;
+      }
+      for (let i = 1; i < 5; i++) {
+        if (x + i < 15 && y + i < 15 && boardArray[x + i][y + i] === color) count++;
+        else break;
+      }
+      if (count >= 5) return true;
+
+      // 检查右斜（从右上到左下）
+      count = 1;
+      for (let i = 1; i < 5; i++) {
+        if (x + i < 15 && y - i >= 0 && boardArray[x + i][y - i] === color) count++;
+        else break;
+      }
+      for (let i = 1; i < 5; i++) {
+        if (x - i >= 0 && y + i < 15 && boardArray[x - i][y + i] === color) count++;
+        else break;
+      }
+      if (count >= 5) return true;
+
+      return false;
+    }
+
+    // 重置游戏
+    function resetGame() {
+      boardArray = Array(size).fill().map(() => Array(size).fill(null));
+      board.querySelectorAll('.piece').forEach(piece => piece.remove());
+      gameStarted = false;
+      board.classList.add('disabled');
+      startButton.disabled = false;
+      status.textContent = `房间 ${roomId}：等待其他玩家...`;
+      socket.emit('resetRoom', roomId);
+    }
+
+    // 开始对决按钮
+    startButton.addEventListener('click', () => {
+      socket.emit('ready', roomId);
+      startButton.disabled = true;
+      status.textContent = `房间 ${roomId}：等待对手准备...`;
+    });
+
+    // 接收游戏开始信号
+    socket.on('startGame', () => {
+      gameStarted = true;
+      board.classList.remove('disabled');
+      status.textContent = `房间 ${roomId}：游戏开始！`;
+      alert('游戏开始！');
+    });
+
+    // 接收对手落子
+    socket.on('opponentMove', (data) => {
+      console.log(`收到对手落子：x=${data.x}, y=${data.y}, color=${data.color}`);
+      handleMove(data.x, data.y, data.color);
+      currentColor = data.color === 'black' ? 'white' : 'black';
+    });
+
+    // 接收重置信号
+    socket.on('resetGame', () => {
+      resetGame();
+    });
+  </script>
+</body>
+</html>
