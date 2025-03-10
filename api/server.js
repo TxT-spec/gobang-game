@@ -1,95 +1,59 @@
 const express = require('express');
-const { createServer } = require('http');
-const { Server } = require('socket.io');
+const http = require('http');
+const socketIo = require('socket.io');
 
 const app = express();
-const server = createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  },
+const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: { origin: "*" },
   transports: ['polling', 'websocket']
 });
 
 const rooms = {};
-let roomCounter = 0;
-
-app.use(express.static(__dirname));
 
 io.on('connection', (socket) => {
-  console.log('新玩家连接');
+  console.log('New client connected:', socket.id);
 
   socket.on('joinRoomRequest', () => {
-    let room;
-    for (const r in rooms) {
-      if (rooms[r].players.length < 2) {
-        room = r;
-        break;
-      }
-    }
-    if (!room) {
-      room = `room${roomCounter++}`;
-      rooms[room] = {
-        board: Array(15).fill().map(() => Array(15).fill(null)),
-        players: [],
-        ready: 0
-      };
-    }
-    socket.join(room);
-    rooms[room].players.push(socket.id);
-    socket.emit('assignRoom', room);
-    io.to(room).emit('playerCount', rooms[room].players.length);
-    console.log(`玩家 ${socket.id} 加入房间 ${room}`);
-  });
-
-  socket.on('ready', (room) => {
-    if (rooms[room]) {
-      rooms[room].ready++;
-      console.log(`房间 ${room} 有 ${rooms[room].ready} 个玩家准备好`);
-      if (rooms[room].ready === 2) {
-        io.to(room).emit('startGame');
-        rooms[room].ready = 0;
+    let roomId = Object.keys(rooms).find(room => rooms[room].length < 2) || `room${Object.keys(rooms).length}`;
+    if (!rooms[roomId]) rooms[roomId] = [];
+    if (rooms[roomId].length < 2) {
+      socket.join(roomId);
+      rooms[roomId].push(socket.id);
+      socket.emit('assignRoom', roomId);
+      io.to(roomId).emit('playerCount', rooms[roomId].length);
+      if (rooms[roomId].length === 2) {
+        io.to(roomId).emit('startGame');
       }
     }
   });
 
   socket.on('move', (data) => {
-    const { room, x, y, color } = data;
-    if (rooms[room] && rooms[room].board[x][y] === null) {
-      rooms[room].board[x][y] = color;
-      io.to(room).emit('opponentMove', { x, y, color });
-      console.log(`广播落子：x=${x}, y=${y}, color=${color}`);
+    socket.to(data.room).emit('opponentMove', data);
+  });
+
+  socket.on('ready', (roomId) => {
+    if (rooms[roomId] && rooms[roomId].length === 2) {
+      io.to(roomId).emit('startGame');
     }
   });
 
-  socket.on('resetRoom', (room) => {
-    if (rooms[room]) {
-      rooms[room].board = Array(15).fill().map(() => Array(15).fill(null));
-      rooms[room].ready = 0;
-      io.to(room).emit('resetGame');
-    }
+  socket.on('resetRoom', (roomId) => {
+    io.to(roomId).emit('resetGame');
   });
 
   socket.on('disconnect', () => {
-    console.log('玩家断开');
-    for (const room in rooms) {
-      const index = rooms[room].players.indexOf(socket.id);
-      if (index !== -1) {
-        rooms[room].players.splice(index, 1);
-        rooms[room].ready = 0;
-        io.to(room).emit('playerCount', rooms[room].players.length);
-        if (rooms[room].players.length === 0) {
-          delete rooms[room];
-        } else {
-          io.to(room).emit('resetGame');
-        }
-      }
+    for (let room in rooms) {
+      rooms[room] = rooms[room].filter(id => id !== socket.id);
+      if (rooms[room].length === 0) delete rooms[room];
+      else io.to(room).emit('playerCount', rooms[room].length);
     }
   });
 });
 
-module.exports = (req, res) => {
-  // 将Express应用适配为Vercel的Serverless函数
-  server.emit('request', req, res);
-};
+const port = process.env.PORT || 3000;
+server.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
+
+module.exports = app;
